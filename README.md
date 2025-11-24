@@ -1,6 +1,4 @@
 
-content = r"""# Python Circuit CAD (HSPICE Generator)
-
 這是一個基於 Python Tkinter 開發的輕量級電路繪製工具，專注於快速繪製電路圖並生成 HSPICE Netlist。無需安裝龐大的 EDA 軟體，即可進行基礎的電路設計與網表導出。
 
 ## 主要功能 (Main Features)
@@ -70,7 +68,4 @@ python main.py
 *   Anaconda 或 Miniconda
 *   Python 3.11+
 *   Tkinter (通常隨 Python 安裝，但在 Conda 中建議顯式安裝 `tk` 包)
-"""
 
-with open("README.md", "w", encoding="utf-8") as f:
-    f.write(content)
