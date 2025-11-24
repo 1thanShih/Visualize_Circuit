@@ -54,7 +54,7 @@ python main.py
 | **Esc** | 選擇模式 (Select) | 回到預設游標模式 |
 | **F1** | 顯示說明 (Help) | 查看幫助視窗 |
 
-## 📂 專案結構
+## 專案結構
 
 *   `main.py`: 程式入口點，負責視窗初始化與快捷鍵綁定。
 *   `editor.py`: 核心編輯器邏輯，處理畫布操作與事件。
@@ -63,7 +63,7 @@ python main.py
 *   `env.yaml`: Conda 環境設定檔。
 *   `run.bat`: Windows 自動啟動腳本。
 
-## 🛠️ 系統需求
+## 系統需求
 
 *   Anaconda 或 Miniconda
 *   Python 3.11+
