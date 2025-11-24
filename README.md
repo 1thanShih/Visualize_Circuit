@@ -66,6 +66,7 @@ python main.py
 ## 系統需求
 
 *   Anaconda 或 Miniconda
+    (https://www.anaconda.com/docs/getting-started/miniconda/main)
 *   Python 3.11+
 *   Tkinter (通常隨 Python 安裝，但在 Conda 中建議顯式安裝 `tk` 包)
 
