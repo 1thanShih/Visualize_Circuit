@@ -14,5 +14,5 @@ run:
 	conda run -n $(ENV_NAME) python main.py
 
 # Remove the conda environment
-clean:
-	conda env remove -n $(ENV_NAME) -y
+# clean:
+# 	conda env remove -n $(ENV_NAME) -y

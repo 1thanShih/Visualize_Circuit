@@ -1,72 +1,67 @@
 
-這是一個基於 Python Tkinter 開發的輕量級電路繪製工具，專注於快速繪製電路圖並生成 HSPICE Netlist。無需安裝龐大的 EDA 軟體，即可進行基礎的電路設計與網表導出。
+# Visualize_Circuit — 電路繪製與 Netlist 匯出
 
-## 主要功能 (Main Features)
+Visualize_Circuit is a lightweight circuit drawing tool built with Python and Tkinter. It focuses on quick schematic drawing and exporting HSPICE-compatible netlists (.sp).
+這是一個基於 Python + Tkinter 的輕量級電路繪製工具，專注於快速繪製電路圖並生成 HSPICE 相容的 Netlist（.sp）。
 
-*   **輕量級且跨平台**：基於 Python 標準庫 Tkinter，啟動迅速。
-*   **HSPICE 支援**：可直接導出相容於 HSPICE 的 Netlist 檔案。
-*   **常用元件支援**：內建電阻 (R)、電感 (L)、電容 (C)、NMOS、PMOS 等元件。
-*   **便捷操作**：支援快捷鍵生成元件、旋轉、鏡像與連線。
-*   **自動環境配置**：提供 Windows 批次檔自動建立 Conda 環境並修復常見的 Tcl/Tk 問題。
+## 主要功能 / Main Features
 
-##  快速開始 (Quick Start)
+- 輕量且跨平台（Windows / Linux / macOS）、匯出 HSPICE Netlist、常用元件（R/L/C/NMOS/PMOS）、快捷鍵與基礎編輯。
+- Lightweight and cross-platform, exports HSPICE-compatible netlists (.sp), common components (R/L/C/NMOS/PMOS), keyboard shortcuts for fast editing.
 
-### Windows 使用者 (推薦)
+## 快速開始 / Quick Start
 
-本專案包含一個自動化腳本，可自動處理環境依賴。
+### 使用 Conda（推薦） / Using Conda (recommended)
 
-1.  找到資料夾中的 **`run.bat`** 檔案。
-2.  直接雙擊執行。
-    *   腳本會自動檢查是否已安裝 Conda 環境 `circuit_cad`。
-    *   若無，將自動建立環境並安裝 Python 3.11 與 Tkinter。
-    *   最後自動啟動程式。
+中文：
+建議使用 `env.yaml` 或 `Makefile` 建立 Conda 環境後執行。
 
-### 手動安裝 (Manual Installation)
-
-如果您熟悉命令列操作，也可以手動建立環境：
+English:
+Use the provided `env.yaml` to create a Conda environment, then run the app.
 
 ```bash
-# 1. 建立 Conda 環境 (指定 python 3.11 和 tk 以避免 GUI 錯誤)
-conda create -n circuit_cad python=3.11 tk -y
+# create environment from env.yaml
+conda env create -f env.yaml -n circuit_cad
 
-# 2. 啟用環境
+# activate
 conda activate circuit_cad
 
-# 3. 執行程式
+# run
 python main.py
 ```
 
-## 快捷鍵列表 (Shortcuts)
+或使用 Makefile：
 
-為了提高繪圖效率，本工具高度依賴鍵盤快捷鍵：
+```bash
+make        # runs "setup" then "run" according to the Makefile
+```
 
-| 按鍵 | 功能 | 說明 |
-| :--- | :--- | :--- |
-| **R** | 新增電阻 (Resistor) | |
-| **L** | 新增電感 (Inductor) | |
-| **C** | 新增電容 (Capacitor) | |
-| **N** | 新增 NMOS | |
-| **P** | 新增 PMOS | |
-| **W** | 切換連線模式 (Wire) | 再次按下可退出 |
-| **Del** | 切換刪除模式 (Delete) | 點擊元件以刪除 |
-| **M** | 鏡像元件 (Mirror) | 水平翻轉選中的元件 |
-| **O** | 旋轉元件 (Rotate) | 順時針旋轉選中的元件 |
-| **Esc** | 選擇模式 (Select) | 回到預設游標模式 |
-| **F1** | 顯示說明 (Help) | 查看幫助視窗 |
+Windows: you can also run `run.bat` which automates environment creation and starts the app.
 
-## 專案結構
+## 快捷鍵 / Shortcuts (summary)
 
-*   `main.py`: 程式入口點，負責視窗初始化與快捷鍵綁定。
-*   `editor.py`: 核心編輯器邏輯，處理畫布操作與事件。
-*   `components.py`: 定義電路元件的屬性與繪製方法。
-*   `circuit_utils.py`: 電路網表生成與輔助工具。
-*   `env.yaml`: Conda 環境設定檔。
-*   `run.bat`: Windows 自動啟動腳本。
+- R (電阻), L (電感), C (電容), N (NMOS), P (PMOS), W (連線), Del (刪除), M (鏡像), O (旋轉), Esc (選擇), F1 (說明)
+- R (Resistor), L (Inductor), C (Capacitor), N (NMOS), P (PMOS), W (Wire mode), Del (Delete), M (Mirror), O (Rotate), Esc (Select), F1 (Help)
 
-## 系統需求
+## 專案結構 / Project Layout
 
-*   Anaconda 或 Miniconda
-    (https://www.anaconda.com/docs/getting-started/miniconda/main)
-*   Python 3.11+
-*   Tkinter (通常隨 Python 安裝，但在 Conda 中建議顯式安裝 `tk` 包)
+- `main.py` - 程式入口 / app entry point
+- `editor.py` - 編輯器與畫布事件處理 / editor and canvas logic
+- `components.py` - 元件定義與繪製 / component definitions and drawing
+- `circuit_utils.py` - 網表生成 / netlist generation utilities
+- `env.yaml` - Conda environment file
+- `run.bat` - Windows automation script
+
+## Makefile
+
+`Makefile` 提供 `setup`（建立 Conda 環境）與 `run`（啟動程式）目標。直接執行 `make` 會順序執行這兩個目標。
+
+The `Makefile` has `setup` (creates Conda env) and `run` (starts the app). `make` runs both.
+
+## Netlist 與輸出檔案 / Netlist and Outputs
+
+- 工具會匯出 HSPICE 相容的 Netlist（常見副檔名 `.sp` 或 `.spice`）。另外可能會產生 JSON 儲存或導出檔案。
+- The tool exports HSPICE-compatible netlists (commonly `.sp`); it may also produce JSON save/export files.
+
+注意 / Note: the repository `.gitignore` currently ignores `*.sp` and `*.json` to avoid committing exported artifacts. If you want to keep exports under version control, remove those patterns from `.gitignore`.
 
