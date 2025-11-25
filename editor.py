@@ -1,5 +1,9 @@
 import tkinter as tk
 from tkinter import messagebox, filedialog, ttk
+import json
+import os
+
+# 引入所有元件類別，以便讀檔時動態生成
 from components import Resistor, Inductor, Capacitor, CMOS, Pin, VoltageSource, CurrentSource
 from circuit_utils import snap, dist, is_point_on_segment, get_closest_point_on_segment
 
@@ -24,16 +28,13 @@ class CircuitEditor:
         self.drag_data = {}
         self.del_style = tk.StringVar(value="CLICK") 
         
-
+        # 全域設定
         self.global_settings = {
-            "lib_path": "",       # e.g., C:/hspice/mm018.l
-            "corner": "TT",       # e.g., TT, SS, FF
-            "temp": "25",         # e.g., 25
-            "def_n_model": "nch", # Default NMOS model name
-            "def_p_model": "pch", # Default PMOS model name
-            "options": "POST"     # .OPTIONS params
+            "lib_path": "", "corner": "TT", "temp": "25",
+            "def_n_model": "nch", "def_p_model": "pch", "options": "POST"
         }
 
+        # 模擬指令
         self.sim_settings = {
             ".OP":   {"active": False, "params": "", "hint": "(Operating Point)"},
             ".TRAN": {"active": True,  "params": "1n 100n", "hint": "step stop [start]"},
@@ -54,10 +55,26 @@ class CircuitEditor:
             menu = tk.Menu(mb, tearoff=0)
             mb.config(menu=menu)
             for label, cmd_code in items:
-                menu.add_command(label=label, command=lambda c=cmd_code: self.add_comp(c))
+                # 這裡區分：如果是字串則執行 add_comp，如果是函數則直接執行
+                if callable(cmd_code):
+                    menu.add_command(label=label, command=cmd_code)
+                else:
+                    menu.add_command(label=label, command=lambda c=cmd_code: self.add_comp(c))
             mb.pack(side=tk.LEFT, padx=2)
             return mb
 
+        # 1. [新增] File Menu
+        create_dropdown(toolbar, "File", [
+            ("Open Schematic (.json)", self.load_schematic_dialog),
+            ("Save Schematic (.json)", self.save_schematic_dialog),
+            ("Save Netlist (.sp)", self.save_netlist_dialog),
+            ("Save Both", self.save_both_dialog)
+        ])
+        
+        # 分隔線
+        tk.Label(toolbar, text="|", fg="gray").pack(side=tk.LEFT, padx=2)
+
+        # 2. Components
         create_dropdown(toolbar, "Passives", [("Resistor (R)", "R"), ("Inductor (L)", "L"), ("Capacitor (C)", "C")])
         create_dropdown(toolbar, "MOSFETs", [("NMOS (N)", "NMOS"), ("PMOS (P)", "PMOS")])
         create_dropdown(toolbar, "Sources", [("Voltage (V)", "V"), ("Current (I)", "I")])
@@ -68,13 +85,12 @@ class CircuitEditor:
         self.mode_label = tk.Label(toolbar, text="Mode: SELECT", fg="blue", font=("Arial", 10, "bold"))
         self.mode_label.pack(side=tk.LEFT, padx=5)
 
-     
+        # 右側功能區
         tk.Button(toolbar, text="Help(F1)", bg="lightblue", command=self.show_help).pack(side=tk.RIGHT)
         
-
-        tk.Button(toolbar, text="Generate Netlist", bg="yellow", command=self.export_netlist).pack(side=tk.RIGHT, padx=5)
+        # 模擬與設定按鈕 (Generate Netlist 改為只顯示 Netlist Window)
+        tk.Button(toolbar, text="View Netlist", bg="yellow", command=self.export_netlist_window).pack(side=tk.RIGHT, padx=5)
         tk.Button(toolbar, text="Sim Settings", bg="#ccffcc", command=self.open_sim_settings).pack(side=tk.RIGHT, padx=2)
-
         tk.Button(toolbar, text="Global Config", bg="#e0e0e0", command=self.open_global_settings).pack(side=tk.RIGHT, padx=2)
         
         del_frame = tk.Frame(toolbar, bd=1, relief=tk.SUNKEN)
@@ -102,6 +118,240 @@ class CircuitEditor:
             self.canvas.create_line(0, i, 2000, i, fill="#f0f0f0", tags="grid")
         self.canvas.tag_lower("grid")
 
+    # --- Save / Load Logic (新增部分) ---
+
+    def get_schematic_data(self):
+        """將目前畫布狀態轉為 Dictionary"""
+        data = {
+            "global_settings": self.global_settings,
+            "sim_settings": self.sim_settings,
+            "components": [],
+            "wires": []
+        }
+        
+        # 儲存元件
+        for comp in self.components:
+            item = {
+                "type": type(comp).__name__,
+                "x": comp.x, "y": comp.y,
+                "rotation": comp.rotation,
+                "mirror": comp.mirror,
+                "name": comp.name,
+                "value": comp.value,
+                # 儲存端點自定義名稱
+                "terminals": [t.custom_net_name for t in comp.terminals]
+            }
+            # 特殊屬性儲存
+            if isinstance(comp, CMOS):
+                item["model"] = comp.model
+                item["w"] = comp.w
+                item["l"] = comp.l
+                item["p_type"] = comp.p_type
+            elif isinstance(comp, (VoltageSource, CurrentSource)):
+                item["source_type"] = comp.source_type
+                item["params"] = comp.params
+            
+            data["components"].append(item)
+            
+        # 儲存電線
+        for wire in self.wires:
+            data["wires"].append({
+                "start": wire.start_p,
+                "end": wire.end_p
+            })
+            
+        return data
+
+    def load_schematic_data(self, data):
+        """從 Dictionary 還原畫布"""
+        # 1. 清空畫布
+        self.canvas.delete("all")
+        self.components = []
+        self.wires = []
+        self.draw_grid()
+        
+        # 2. 還原設定
+        if "global_settings" in data: self.global_settings = data["global_settings"]
+        if "sim_settings" in data: self.sim_settings = data["sim_settings"]
+        
+        # 3. 還原元件
+        # 建立名稱對應 Class 的映射
+        class_map = {
+            "Resistor": Resistor, "Inductor": Inductor, "Capacitor": Capacitor,
+            "CMOS": CMOS, "Pin": Pin, 
+            "VoltageSource": VoltageSource, "CurrentSource": CurrentSource
+        }
+        
+        for item in data["components"]:
+            c_type = item["type"]
+            if c_type not in class_map: continue
+            
+            cls = class_map[c_type]
+            
+            # 特殊建構子處理 (CMOS 需要 p_type)
+            if c_type == "CMOS":
+                comp = cls(self.canvas, item["x"], item["y"], item.get("p_type", False))
+                comp.model = item.get("model", "nch")
+                comp.w = item.get("w", "1u")
+                comp.l = item.get("l", "0.18u")
+            else:
+                comp = cls(self.canvas, item["x"], item["y"])
+                
+            # 還原通用屬性
+            comp.name = item["name"]
+            comp.value = item["value"]
+            comp.rotation = item.get("rotation", 0)
+            comp.mirror = item.get("mirror", False)
+            
+            # 還原端點名稱
+            term_names = item.get("terminals", [])
+            for i, t_name in enumerate(term_names):
+                if i < len(comp.terminals):
+                    comp.terminals[i].custom_net_name = t_name
+            
+            # 還原電源屬性
+            if isinstance(comp, (VoltageSource, CurrentSource)):
+                comp.source_type = item.get("source_type", "DC")
+                comp.params = item.get("params", {})
+                comp.update_display_value()
+            
+            # 應用旋轉與鏡像的視覺
+            # 因為 update_visuals 會重繪，我們要確保旋轉狀態正確
+            # 這裡比較tricky，因為 component 的 rotate() 是增量旋轉
+            # 所以我們直接設定屬性，然後 call update_visuals
+            comp.update_visuals()
+            
+            self.components.append(comp)
+
+        # 4. 還原電線
+        for w_data in data["wires"]:
+            start = tuple(w_data["start"])
+            end = tuple(w_data["end"])
+            wire = Wire(self.canvas, start, end)
+            self.wires.append(wire)
+
+    def save_schematic_dialog(self):
+        filename = filedialog.asksaveasfilename(defaultextension=".json", 
+                                                filetypes=[("JSON Files", "*.json")])
+        if filename:
+            data = self.get_schematic_data()
+            try:
+                with open(filename, "w") as f:
+                    json.dump(data, f, indent=4)
+                messagebox.showinfo("Success", "Schematic saved successfully!")
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to save schematic:\n{e}")
+                
+    def load_schematic_dialog(self):
+        filename = filedialog.askopenfilename(filetypes=[("JSON Files", "*.json")])
+        if filename:
+            try:
+                with open(filename, "r") as f:
+                    data = json.load(f)
+                self.load_schematic_data(data)
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to load schematic:\n{e}")
+
+    def generate_netlist_text(self):
+        """生成 Netlist 文字內容 (不彈出視窗)"""
+        node_map = self.solve_connectivity()
+        lines = ["* Generated by Python Circuit CAD"]
+        
+        # Options & Temp
+        if self.global_settings["options"]: lines.append(f".OPTIONS {self.global_settings['options']}")
+        if self.global_settings["temp"]: lines.append(f".TEMP {self.global_settings['temp']}")
+            
+        # Library
+        lib_path = self.global_settings["lib_path"]
+        corner = self.global_settings["corner"]
+        if lib_path:
+            lines.append(".PROTECT")
+            lines.append(f".LIB '{lib_path}' {corner}")
+            lines.append(".UNPROTECT")
+        lines.append("")
+
+        # Components
+        for comp in self.components:
+            if isinstance(comp, Pin): continue 
+            abs_terms = comp.get_abs_terminals()
+            node_names = []
+            for term, tx, ty in abs_terms:
+                key = f"{tx},{ty}"
+                if key in node_map: node_names.append(node_map[key])
+                else: node_names.append(f"NC_{comp.name}_{term.name}")
+            
+            line = ""
+            if isinstance(comp, CMOS):
+                line = f"{comp.name} {' '.join(node_names)} {comp.model} W={comp.w} L={comp.l}"
+            elif isinstance(comp, (VoltageSource, CurrentSource)):
+                stype = comp.source_type
+                p = comp.params.get(stype, {})
+                base_line = f"{comp.name} {' '.join(node_names)}"
+                if stype == "DC": line = f"{base_line} DC {p.get('dc_val', '0')}"
+                elif stype == "AC": line = f"{base_line} AC {p.get('mag', '1')} {p.get('phase', '0')}"
+                elif stype == "PULSE": line = f"{base_line} PULSE({p.get('v1')} {p.get('v2')} {p.get('td')} {p.get('tr')} {p.get('tf')} {p.get('pw')} {p.get('per')})"
+                elif stype == "SIN": line = f"{base_line} SIN({p.get('vo')} {p.get('va')} {p.get('freq')} {p.get('td')} {p.get('theta')})"
+                else: line = f"{base_line} DC 0"
+            else:
+                line = f"{comp.name} {' '.join(node_names)} {comp.value}"
+            lines.append(line)
+        
+        # Sim Settings
+        lines.append("\n* --- Simulation Settings ---")
+        for cmd, settings in self.sim_settings.items():
+            if settings["active"]:
+                lines.append(f"{cmd} {settings['params']}")
+        lines.append(".END")
+        return "\n".join(lines)
+
+    def save_netlist_dialog(self):
+        filename = filedialog.asksaveasfilename(defaultextension=".sp", 
+                                                filetypes=[("SPICE Netlist", "*.sp"), ("All Files", "*.*")])
+        if filename:
+            content = self.generate_netlist_text()
+            try:
+                with open(filename, "w") as f:
+                    f.write(content)
+                messagebox.showinfo("Success", "Netlist saved successfully!")
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to save netlist:\n{e}")
+
+    def save_both_dialog(self):
+        # 詢問一次檔名 (不含副檔名)
+        base_filename = filedialog.asksaveasfilename(title="Save Schematic & Netlist (Base Name)",
+                                                     filetypes=[("All Files", "*.*")])
+        if base_filename:
+            # 去除使用者可能不小心打的副檔名
+            if base_filename.endswith(".json") or base_filename.endswith(".sp"):
+                base_filename = os.path.splitext(base_filename)[0]
+                
+            json_path = base_filename + ".json"
+            sp_path = base_filename + ".sp"
+            
+            try:
+                # 1. Save JSON
+                data = self.get_schematic_data()
+                with open(json_path, "w") as f:
+                    json.dump(data, f, indent=4)
+                
+                # 2. Save SPICE
+                content = self.generate_netlist_text()
+                with open(sp_path, "w") as f:
+                    f.write(content)
+                    
+                messagebox.showinfo("Success", f"Saved:\n{json_path}\n{sp_path}")
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to save files:\n{e}")
+
+    def export_netlist_window(self):
+        """舊的 View Netlist 功能"""
+        content = self.generate_netlist_text()
+        win = tk.Toplevel(self.root)
+        t = tk.Text(win, width=80, height=20)
+        t.pack()
+        t.insert(tk.END, content)
+
+    # --- 其餘程式碼保持不變 (setup_ui 以外的工具函數) ---
     def set_mode(self, mode):
         self.mode = mode
         self.mode_label.config(text=f"Mode: {mode}")
@@ -131,113 +381,15 @@ class CircuitEditor:
         elif c_type == "I": comp = CurrentSource(self.canvas, x, y)
         elif c_type == "NMOS": 
             comp = CMOS(self.canvas, x, y, False)
-   
             comp.model = self.global_settings["def_n_model"]
             comp.update_visuals()
         elif c_type == "PMOS": 
             comp = CMOS(self.canvas, x, y, True)
-
             comp.model = self.global_settings["def_p_model"]
             comp.update_visuals()
         elif c_type == "PIN": comp = Pin(self.canvas, x, y)
-        
         if comp: self.components.append(comp)
         self.canvas.focus_set()
-
-
-    def open_global_settings(self):
-        win = tk.Toplevel(self.root)
-        win.title("Global Configuration")
-        win.geometry("450x350")
-        
-        # 1. Library & Process
-        lb_frame = tk.LabelFrame(win, text="Library & Process", padx=10, pady=10)
-        lb_frame.pack(fill=tk.X, padx=10, pady=5)
-        
-        tk.Label(lb_frame, text="Lib Path (.lib):").grid(row=0, column=0, sticky="e")
-        path_var = tk.StringVar(value=self.global_settings["lib_path"])
-        tk.Entry(lb_frame, textvariable=path_var, width=30).grid(row=0, column=1, padx=5)
-        
-        def browse_lib():
-            filename = filedialog.askopenfilename(filetypes=[("Lib Files", "*.lib *.l"), ("All Files", "*.*")])
-            if filename: path_var.set(filename)
-        tk.Button(lb_frame, text="Browse", command=browse_lib).grid(row=0, column=2)
-
-        tk.Label(lb_frame, text="Corner (e.g. TT):").grid(row=1, column=0, sticky="e")
-        corn_var = tk.StringVar(value=self.global_settings["corner"])
-        tk.Entry(lb_frame, textvariable=corn_var, width=10).grid(row=1, column=1, sticky="w", padx=5)
-
-        # 2. Environment
-        env_frame = tk.LabelFrame(win, text="Environment", padx=10, pady=10)
-        env_frame.pack(fill=tk.X, padx=10, pady=5)
-        
-        tk.Label(env_frame, text="Temperature (.TEMP):").grid(row=0, column=0, sticky="e")
-        temp_var = tk.StringVar(value=self.global_settings["temp"])
-        tk.Entry(env_frame, textvariable=temp_var, width=10).grid(row=0, column=1, sticky="w", padx=5)
-
-        tk.Label(env_frame, text="Options (.OPTION):").grid(row=1, column=0, sticky="e")
-        opt_var = tk.StringVar(value=self.global_settings["options"])
-        tk.Entry(env_frame, textvariable=opt_var, width=20).grid(row=1, column=1, sticky="w", padx=5)
-
-        # 3. Default Models
-        mod_frame = tk.LabelFrame(win, text="Default Component Models", padx=10, pady=10)
-        mod_frame.pack(fill=tk.X, padx=10, pady=5)
-        
-        tk.Label(mod_frame, text="Default NMOS Model:").grid(row=0, column=0, sticky="e")
-        nmod_var = tk.StringVar(value=self.global_settings["def_n_model"])
-        tk.Entry(mod_frame, textvariable=nmod_var).grid(row=0, column=1, sticky="w", padx=5)
-        
-        tk.Label(mod_frame, text="Default PMOS Model:").grid(row=1, column=0, sticky="e")
-        pmod_var = tk.StringVar(value=self.global_settings["def_p_model"])
-        tk.Entry(mod_frame, textvariable=pmod_var).grid(row=1, column=1, sticky="w", padx=5)
-
-        def on_save():
-            self.global_settings["lib_path"] = path_var.get()
-            self.global_settings["corner"] = corn_var.get()
-            self.global_settings["temp"] = temp_var.get()
-            self.global_settings["options"] = opt_var.get()
-            self.global_settings["def_n_model"] = nmod_var.get()
-            self.global_settings["def_p_model"] = pmod_var.get()
-            win.destroy()
-
-        tk.Button(win, text="Save Settings", command=on_save, bg="lightgreen", width=15).pack(pady=10)
-        
-        win.transient(self.root)
-        win.grab_set()
-        self.root.wait_window(win)
-
-    def open_sim_settings(self):
-        win = tk.Toplevel(self.root)
-        win.title("HSPICE Analysis Setup")
-        win.geometry("500x350")
-        vars_store = {}
-        tk.Label(win, text="Enable", font=("Arial", 10, "bold")).grid(row=0, column=0, padx=5, pady=5)
-        tk.Label(win, text="Command", font=("Arial", 10, "bold")).grid(row=0, column=1, padx=5, pady=5, sticky="w")
-        tk.Label(win, text="Parameters", font=("Arial", 10, "bold")).grid(row=0, column=2, padx=5, pady=5, sticky="w")
-        row = 1
-        order = [".TRAN", ".DC", ".AC", ".OP", ".TF", ".NOISE"]
-        for cmd in order:
-            settings = self.sim_settings[cmd]
-            var_active = tk.BooleanVar(value=settings["active"])
-            chk = tk.Checkbutton(win, variable=var_active)
-            chk.grid(row=row, column=0)
-            tk.Label(win, text=cmd, fg="blue").grid(row=row, column=1, sticky="w")
-            var_params = tk.StringVar(value=settings["params"])
-            entry = tk.Entry(win, textvariable=var_params, width=30)
-            entry.grid(row=row, column=2, padx=5, sticky="w")
-            tk.Label(win, text=settings["hint"], fg="gray", font=("Arial", 8)).grid(row=row, column=3, sticky="w")
-            vars_store[cmd] = (var_active, var_params)
-            row += 1
-        def on_save():
-            for cmd, (v_act, v_param) in vars_store.items():
-                self.sim_settings[cmd]["active"] = v_act.get()
-                self.sim_settings[cmd]["params"] = v_param.get()
-            win.destroy()
-        tk.Button(win, text="Save & Close", command=on_save, bg="lightgreen", width=15).grid(row=row+1, column=0, columnspan=4, pady=15)
-        win.transient(self.root)
-        win.grab_set()
-        self.root.wait_window(win)
-
 
     def select_item(self, item, item_type):
         self.deselect_all()
@@ -440,6 +592,83 @@ class CircuitEditor:
             
     def show_help(self):
         messagebox.showinfo("Help", "Shortcuts:\nW: Wire Mode\nR/M: Rotate/Mirror\nDel: Delete Mode\nDouble Click: Property")
+    
+    def open_global_settings(self):
+        win = tk.Toplevel(self.root)
+        win.title("Global Configuration")
+        win.geometry("450x350")
+        lb_frame = tk.LabelFrame(win, text="Library & Process", padx=10, pady=10)
+        lb_frame.pack(fill=tk.X, padx=10, pady=5)
+        tk.Label(lb_frame, text="Lib Path (.lib):").grid(row=0, column=0, sticky="e")
+        path_var = tk.StringVar(value=self.global_settings["lib_path"])
+        tk.Entry(lb_frame, textvariable=path_var, width=30).grid(row=0, column=1, padx=5)
+        def browse_lib():
+            filename = filedialog.askopenfilename(filetypes=[("Lib Files", "*.lib *.l"), ("All Files", "*.*")])
+            if filename: path_var.set(filename)
+        tk.Button(lb_frame, text="Browse", command=browse_lib).grid(row=0, column=2)
+        tk.Label(lb_frame, text="Corner (e.g. TT):").grid(row=1, column=0, sticky="e")
+        corn_var = tk.StringVar(value=self.global_settings["corner"])
+        tk.Entry(lb_frame, textvariable=corn_var, width=10).grid(row=1, column=1, sticky="w", padx=5)
+        env_frame = tk.LabelFrame(win, text="Environment", padx=10, pady=10)
+        env_frame.pack(fill=tk.X, padx=10, pady=5)
+        tk.Label(env_frame, text="Temperature (.TEMP):").grid(row=0, column=0, sticky="e")
+        temp_var = tk.StringVar(value=self.global_settings["temp"])
+        tk.Entry(env_frame, textvariable=temp_var, width=10).grid(row=0, column=1, sticky="w", padx=5)
+        tk.Label(env_frame, text="Options (.OPTION):").grid(row=1, column=0, sticky="e")
+        opt_var = tk.StringVar(value=self.global_settings["options"])
+        tk.Entry(env_frame, textvariable=opt_var, width=20).grid(row=1, column=1, sticky="w", padx=5)
+        mod_frame = tk.LabelFrame(win, text="Default Component Models", padx=10, pady=10)
+        mod_frame.pack(fill=tk.X, padx=10, pady=5)
+        tk.Label(mod_frame, text="Default NMOS Model:").grid(row=0, column=0, sticky="e")
+        nmod_var = tk.StringVar(value=self.global_settings["def_n_model"])
+        tk.Entry(mod_frame, textvariable=nmod_var).grid(row=0, column=1, sticky="w", padx=5)
+        tk.Label(mod_frame, text="Default PMOS Model:").grid(row=1, column=0, sticky="e")
+        pmod_var = tk.StringVar(value=self.global_settings["def_p_model"])
+        tk.Entry(mod_frame, textvariable=pmod_var).grid(row=1, column=1, sticky="w", padx=5)
+        def on_save():
+            self.global_settings["lib_path"] = path_var.get()
+            self.global_settings["corner"] = corn_var.get()
+            self.global_settings["temp"] = temp_var.get()
+            self.global_settings["options"] = opt_var.get()
+            self.global_settings["def_n_model"] = nmod_var.get()
+            self.global_settings["def_p_model"] = pmod_var.get()
+            win.destroy()
+        tk.Button(win, text="Save Settings", command=on_save, bg="lightgreen", width=15).pack(pady=10)
+        win.transient(self.root)
+        win.grab_set()
+        self.root.wait_window(win)
+
+    def open_sim_settings(self):
+        win = tk.Toplevel(self.root)
+        win.title("HSPICE Analysis Setup")
+        win.geometry("500x350")
+        vars_store = {}
+        tk.Label(win, text="Enable", font=("Arial", 10, "bold")).grid(row=0, column=0, padx=5, pady=5)
+        tk.Label(win, text="Command", font=("Arial", 10, "bold")).grid(row=0, column=1, padx=5, pady=5, sticky="w")
+        tk.Label(win, text="Parameters", font=("Arial", 10, "bold")).grid(row=0, column=2, padx=5, pady=5, sticky="w")
+        row = 1
+        order = [".TRAN", ".DC", ".AC", ".OP", ".TF", ".NOISE"]
+        for cmd in order:
+            settings = self.sim_settings[cmd]
+            var_active = tk.BooleanVar(value=settings["active"])
+            chk = tk.Checkbutton(win, variable=var_active)
+            chk.grid(row=row, column=0)
+            tk.Label(win, text=cmd, fg="blue").grid(row=row, column=1, sticky="w")
+            var_params = tk.StringVar(value=settings["params"])
+            entry = tk.Entry(win, textvariable=var_params, width=30)
+            entry.grid(row=row, column=2, padx=5, sticky="w")
+            tk.Label(win, text=settings["hint"], fg="gray", font=("Arial", 8)).grid(row=row, column=3, sticky="w")
+            vars_store[cmd] = (var_active, var_params)
+            row += 1
+        def on_save():
+            for cmd, (v_act, v_param) in vars_store.items():
+                self.sim_settings[cmd]["active"] = v_act.get()
+                self.sim_settings[cmd]["params"] = v_param.get()
+            win.destroy()
+        tk.Button(win, text="Save & Close", command=on_save, bg="lightgreen", width=15).grid(row=row+1, column=0, columnspan=4, pady=15)
+        win.transient(self.root)
+        win.grab_set()
+        self.root.wait_window(win)
 
     def solve_connectivity(self):
         adj_list = {} 
@@ -509,67 +738,3 @@ class CircuitEditor:
                 for pt in group_pts:
                     node_map[pt] = final_name
         return node_map
-
-    def export_netlist(self):
-        node_map = self.solve_connectivity()
-        # Netlist Header:Global Settings
-        lines = ["* Generated by Python Circuit CAD"]
-        
-        # 1. Options
-        if self.global_settings["options"]:
-            lines.append(f".OPTIONS {self.global_settings['options']}")
-            
-        # 2. Temp
-        if self.global_settings["temp"]:
-            lines.append(f".TEMP {self.global_settings['temp']}")
-            
-        # 3. Library
-        lib_path = self.global_settings["lib_path"]
-        corner = self.global_settings["corner"]
-        if lib_path:
-            # HSPICE .LIB syntax: .LIB 'filename' entryname
-            lines.append(".PROTECT")
-            lines.append(f".LIB '{lib_path}' {corner}")
-            lines.append(".UNPROTECT")
-            
-        lines.append("")
-
-        # 4. Components
-        for comp in self.components:
-            if isinstance(comp, Pin): continue 
-            abs_terms = comp.get_abs_terminals()
-            node_names = []
-            for term, tx, ty in abs_terms:
-                key = f"{tx},{ty}"
-                if key in node_map:
-                    node_names.append(node_map[key])
-                else:
-                    node_names.append(f"NC_{comp.name}_{term.name}")
-            line = ""
-            if isinstance(comp, CMOS):
-                line = f"{comp.name} {' '.join(node_names)} {comp.model} W={comp.w} L={comp.l}"
-            elif isinstance(comp, (VoltageSource, CurrentSource)):
-                stype = comp.source_type
-                p = comp.params.get(stype, {})
-                base_line = f"{comp.name} {' '.join(node_names)}"
-                if stype == "DC": line = f"{base_line} DC {p.get('dc_val', '0')}"
-                elif stype == "AC": line = f"{base_line} AC {p.get('mag', '1')} {p.get('phase', '0')}"
-                elif stype == "PULSE": line = f"{base_line} PULSE({p.get('v1')} {p.get('v2')} {p.get('td')} {p.get('tr')} {p.get('tf')} {p.get('pw')} {p.get('per')})"
-                elif stype == "SIN": line = f"{base_line} SIN({p.get('vo')} {p.get('va')} {p.get('freq')} {p.get('td')} {p.get('theta')})"
-                else: line = f"{base_line} DC 0"
-            else:
-                line = f"{comp.name} {' '.join(node_names)} {comp.value}"
-            lines.append(line)
-        
-        # 5. Simulation Settings
-        lines.append("\n* --- Simulation Settings ---")
-        for cmd, settings in self.sim_settings.items():
-            if settings["active"]:
-                lines.append(f"{cmd} {settings['params']}")
-        
-        lines.append(".END")
-        
-        win = tk.Toplevel(self.root)
-        t = tk.Text(win, width=80, height=20)
-        t.pack()
-        t.insert(tk.END, "\n".join(lines))
