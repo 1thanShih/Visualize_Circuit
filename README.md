@@ -1,7 +1,7 @@
 
 # Visualize_Circuit — 電路繪製與 Netlist 匯出
 
-Visualize_Circuit is a lightweight circuit drawing tool built with Python and Tkinter. It focuses on quick schematic drawing and exporting HSPICE-compatible netlists (.sp).
+Visualize_Circuit is a lightweight circuit drawing tool built with Python and Tkinter. It focuses on quick schematic drawing and exporting HSPICE-compatible netlists (.sp)./n
 這是一個基於 Python + Tkinter 的輕量級電路繪製工具，專注於快速繪製電路圖並生成 HSPICE 相容的 Netlist（.sp）。
 
 ## 主要功能 / Main Features
